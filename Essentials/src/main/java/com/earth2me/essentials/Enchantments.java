@@ -277,9 +277,16 @@ public final class Enchantments {
     }
 
     public static Enchantment getByName(final String name) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
         Enchantment enchantment = null;
         if (isFlat) { // 1.13+ only
-            enchantment = Enchantment.getByKey(NamespacedKey.minecraft(name.toLowerCase()));
+            try {
+                enchantment = Enchantment.getByKey(NamespacedKey.minecraft(name.toLowerCase()));
+            } catch (IllegalArgumentException ignored) {
+                // NamespacedKey throws IAE if key does not match regex
+            }
         }
 
         if (enchantment == null) {
@@ -287,7 +294,7 @@ public final class Enchantments {
         }
         if (enchantment == null) {
             enchantment = Enchantment.getByName(name.toLowerCase());
-        }   
+        }
         if (enchantment == null) {
             enchantment = Enchantment.getByName(name);
         }

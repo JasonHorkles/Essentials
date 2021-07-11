@@ -7,6 +7,7 @@ import com.earth2me.essentials.User;
 import com.earth2me.essentials.commands.EssentialsCommand;
 import com.earth2me.essentials.commands.NoChargeException;
 import com.earth2me.essentials.commands.NotEnoughArgumentsException;
+import net.essentialsx.api.v2.events.UserTeleportSpawnEvent;
 import org.bukkit.Location;
 import org.bukkit.Server;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
@@ -69,11 +70,19 @@ public class Commandspawn extends EssentialsCommand {
 
     private void respawn(final CommandSource sender, final User teleportOwner, final User teleportee, final Trade charge, final String commandLabel, final CompletableFuture<Boolean> future) throws Exception {
         final Location spawn = ((SpawnStorage) this.module).getSpawn(teleportee.getGroup());
+        if (spawn == null) {
+            return;
+        }
         sender.sendMessage(tl("teleporting", spawn.getWorld().getName(), spawn.getBlockX(), spawn.getBlockY(), spawn.getBlockZ()));
         future.exceptionally(e -> {
             showError(sender.getSender(), e, commandLabel);
             return false;
         });
+        final UserTeleportSpawnEvent spawnEvent = new UserTeleportSpawnEvent(teleportee, teleportOwner, teleportee.getGroup(), spawn);
+        ess.getServer().getPluginManager().callEvent(spawnEvent);
+        if (spawnEvent.isCancelled()) {
+            return;
+        }
         if (teleportOwner == null) {
             teleportee.getAsyncTeleport().now(spawn, false, TeleportCause.COMMAND, future);
             return;

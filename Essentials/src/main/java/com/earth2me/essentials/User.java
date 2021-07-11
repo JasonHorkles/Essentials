@@ -9,6 +9,7 @@ import com.earth2me.essentials.utils.DateUtil;
 import com.earth2me.essentials.utils.EnumUtil;
 import com.earth2me.essentials.utils.FormatUtil;
 import com.earth2me.essentials.utils.NumberUtil;
+import com.earth2me.essentials.utils.TriState;
 import com.earth2me.essentials.utils.VersionUtil;
 import com.google.common.collect.Lists;
 import net.ess3.api.IEssentials;
@@ -18,6 +19,7 @@ import net.ess3.api.events.JailStatusChangeEvent;
 import net.ess3.api.events.MuteStatusChangeEvent;
 import net.ess3.api.events.UserBalanceUpdateEvent;
 import net.essentialsx.api.v2.events.TransactionEvent;
+import net.essentialsx.api.v2.services.mail.MailSender;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Statistic;
@@ -114,11 +116,22 @@ public class User extends UserData implements Comparable<User>, IMessageRecipien
 
     @Override
     public boolean isPermissionSet(final String node) {
-        return isPermSetCheck(node);
+        final boolean result = isPermSetCheck(node);
+        if (ess.getSettings().isDebug()) {
+            ess.getLogger().log(Level.INFO, "checking if " + base.getName() + " has " + node + " (set-explicit) - " + result);
+        }
+        return result;
+    }
+
+    /**
+     * Checks if the given permission is explicitly defined and returns its value, otherwise
+     * {@link TriState#UNSET}.
+     */
+    public TriState isAuthorizedExact(final String node) {
+        return isAuthorizedExactCheck(node);
     }
 
     private boolean isAuthorizedCheck(final String node) {
-
         if (base instanceof OfflinePlayer) {
             return false;
         }
@@ -151,6 +164,24 @@ public class User extends UserData implements Comparable<User>, IMessageRecipien
             }
 
             return false;
+        }
+    }
+
+    private TriState isAuthorizedExactCheck(final String node) {
+        if (base instanceof OfflinePlayer) {
+            return TriState.UNSET;
+        }
+
+        try {
+            return ess.getPermissionsHandler().isPermissionSetExact(base, node);
+        } catch (final Exception ex) {
+            if (ess.getSettings().isDebug()) {
+                ess.getLogger().log(Level.SEVERE, "Permission System Error: " + ess.getPermissionsHandler().getName() + " returned: " + ex.getMessage(), ex);
+            } else {
+                ess.getLogger().log(Level.SEVERE, "Permission System Error: " + ess.getPermissionsHandler().getName() + " returned: " + ex.getMessage());
+            }
+
+            return TriState.UNSET;
         }
     }
 
@@ -623,13 +654,15 @@ public class User extends UserData implements Comparable<User>, IMessageRecipien
                     setJailed(false);
                     sendMessage(tl("haveBeenReleased"));
                     setJail(null);
-                    if (ess.getSettings().isTeleportBackWhenFreedFromJail()) {
+                    if (ess.getSettings().getTeleportWhenFreePolicy() == ISettings.TeleportWhenFreePolicy.BACK) {
                         final CompletableFuture<Boolean> future = new CompletableFuture<>();
                         getAsyncTeleport().back(future);
                         future.exceptionally(e -> {
                             getAsyncTeleport().respawn(null, TeleportCause.PLUGIN, new CompletableFuture<>());
                             return false;
                         });
+                    } else if (ess.getSettings().getTeleportWhenFreePolicy() == ISettings.TeleportWhenFreePolicy.SPAWN) {
+                        getAsyncTeleport().respawn(null, TeleportCause.PLUGIN, new CompletableFuture<>());
                     }
                     return true;
                 }
@@ -863,6 +896,9 @@ public class User extends UserData implements Comparable<User>, IMessageRecipien
             if (isAuthorized("essentials.vanish.effect")) {
                 this.getBase().addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, Integer.MAX_VALUE, 1, false));
             }
+            if (ess.getSettings().sleepIgnoresVanishedPlayers()) {
+                getBase().setSleepingIgnored(true);
+            }
         } else {
             for (final Player p : ess.getOnlinePlayers()) {
                 p.showPlayer(getBase());
@@ -871,6 +907,9 @@ public class User extends UserData implements Comparable<User>, IMessageRecipien
             ess.getVanishedPlayersNew().remove(getName());
             if (isAuthorized("essentials.vanish.effect")) {
                 this.getBase().removePotionEffect(PotionEffectType.INVISIBILITY);
+            }
+            if (ess.getSettings().sleepIgnoresVanishedPlayers() && !isAuthorized("essentials.sleepingignored")) {
+                getBase().setSleepingIgnored(false);
             }
         }
     }
@@ -950,6 +989,11 @@ public class User extends UserData implements Comparable<User>, IMessageRecipien
     }
 
     @Override
+    public UUID getUUID() {
+        return getBase().getUniqueId();
+    }
+
+    @Override
     public boolean isReachable() {
         return getBase().isOnline();
     }
@@ -1016,12 +1060,28 @@ public class User extends UserData implements Comparable<User>, IMessageRecipien
         }
     }
 
+    @Override
+    public void sendMail(MailSender sender, String message) {
+        sendMail(sender, message, 0);
+    }
+
+    @Override
+    public void sendMail(MailSender sender, String message, long expireAt) {
+        ess.getMail().sendMail(this, sender, message, expireAt);
+    }
+
+    @Override
+    @Deprecated
+    public void addMail(String mail) {
+        ess.getMail().sendLegacyMail(this, mail);
+    }
+
     public void notifyOfMail() {
-        final List<String> mails = getMails();
-        if (mails != null && !mails.isEmpty()) {
+        final int unread = getUnreadMailAmount();
+        if (unread != 0) {
             final int notifyPlayerOfMailCooldown = ess.getSettings().getNotifyPlayerOfMailCooldown() * 1000;
             if (System.currentTimeMillis() - lastNotifiedAboutMailsMs >= notifyPlayerOfMailCooldown) {
-                sendMessage(tl("youHaveNewMail", mails.size()));
+                sendMessage(tl("youHaveNewMail", unread));
                 lastNotifiedAboutMailsMs = System.currentTimeMillis();
             }
         }
